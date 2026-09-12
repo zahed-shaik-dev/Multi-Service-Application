@@ -1,0 +1,14 @@
+node_modules/
+dist/
+
+.env
+
+secrets/*.txt
+
+*.log
+
+.DS_Store
+
+.vscode/
+
+.idea/

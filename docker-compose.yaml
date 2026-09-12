@@ -1,0 +1,274 @@
+services:
+
+  # ==========================================================
+  # Custom Base Images
+  # ==========================================================
+
+  api-base:
+    build:
+      context: ./base-images/api-base
+    image: multi-service-api-base:1.0
+    profiles:
+      - build-base
+
+  web-base:
+    build:
+      context: ./base-images/web-base
+    image: multi-service-web-base:1.0
+    profiles:
+      - build-base
+
+
+  # ==========================================================
+  # React Frontend
+  # ==========================================================
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+
+    image: multi-service-web:1.0
+
+    networks:
+      - proxy-network
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--no-verbose",
+          "--tries=1",
+          "--spider",
+          "http://localhost/"
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+
+  # ==========================================================
+  # Node.js API
+  # ==========================================================
+
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+
+    image: multi-service-api:1.0
+
+    environment:
+      NODE_ENV: production
+      PORT: 5000
+
+      MONGO_HOST: mongodb
+      MONGO_PORT: 27017
+      MONGO_USER: admin
+
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+
+    secrets:
+      - mongo_root_password
+
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+    networks:
+      - proxy-network
+      - backend-network
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "curl",
+          "-f",
+          "http://localhost:5000/health"
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+
+  # ==========================================================
+  # MongoDB
+  # ==========================================================
+
+  mongodb:
+    image: mongo:8
+
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD_FILE: /run/secrets/mongo_root_password
+      MONGO_INITDB_DATABASE: appdb
+
+    secrets:
+      - mongo_root_password
+
+    volumes:
+      - mongo_data:/data/db
+
+    networks:
+      - backend-network
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "mongosh",
+          "--quiet",
+          "--eval",
+          "db.adminCommand('ping').ok"
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+
+  # ==========================================================
+  # Redis
+  # ==========================================================
+
+  redis:
+    image: redis:8-alpine
+
+    command:
+      [
+        "redis-server",
+        "--appendonly",
+        "yes"
+      ]
+
+    volumes:
+      - redis_data:/data
+
+    networks:
+      - backend-network
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "redis-cli",
+          "ping"
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+
+  # ==========================================================
+  # Nginx Reverse Proxy
+  # ==========================================================
+
+  nginx:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+
+    image: multi-service-nginx:1.0
+
+    ports:
+      - "8081:80"
+
+    depends_on:
+      web:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+
+    networks:
+      - proxy-network
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--no-verbose",
+          "--tries=1",
+          "--spider",
+          "http://localhost/health"
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+
+# ==========================================================
+# Volumes
+# ==========================================================
+
+volumes:
+
+  mongo_data:
+    name: multi-service-mongo-data
+
+  redis_data:
+    name: multi-service-redis-data
+
+
+# ==========================================================
+# Networks
+# ==========================================================
+
+networks:
+
+  proxy-network:
+    name: multi-service-proxy-network
+    driver: bridge
+
+  backend-network:
+    name: multi-service-backend-network
+    driver: bridge
+
+
+# ==========================================================
+# Secrets
+# ==========================================================
+
+secrets:
+
+  mongo_root_password:
+    file: ./secrets/mongo_root_password.txt
